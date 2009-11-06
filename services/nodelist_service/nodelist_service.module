@@ -1,0 +1,87 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * Adds node listing functionality to services module.
+ */
+
+/**
+ * Implementation of hook_help().
+ */
+function nodelist_service_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#services_nodelist':
+      return '<p>'. t('Provides nodelist methods to services applications. Requires services.module.') .'</p>';
+    case 'admin/modules#description':
+      return t('Provides additional nodelist methods to services applications. Requires services.module.');
+  }
+}
+
+/**
+ * Implementation of hook_perm().
+ */
+function nodelist_service_perm() {
+  return array(
+    'load nodes',
+  );
+}
+
+/**
+* Implementation of hook_service()
+*/
+function nodelist_service_service() {
+  return array(
+    // nodelist.get
+    array(
+      '#method'   => 'nodelist.get',
+      '#callback' => 'nodelist_service_get',
+      //'#auth'     => false,
+      '#return'   => 'struct',
+      '#args'     => array(
+        array(
+          '#name'         => 'type',
+          '#type'         => 'string',
+          '#optional'     => TRUE,
+          '#description'  => t('A type of nodes to return.'),
+        ),
+        array(
+          '#name'         => 'offset',
+          '#type'         => 'int',
+          '#optional'     => TRUE,
+          '#description'  => t('The page offset.')
+        )
+      ),
+      '#return'   => 'struct',
+      '#help'     => t('Returns a list of nodes.')
+    )
+  );
+}
+
+/**
+ * Returns a list of nodes.
+ *
+ * @param $type
+ *   String. The node type.
+ * @param $offset
+ *   Int (optional). Page offset.
+ *
+ * @return
+ *   Array. The list of nodes.
+ */
+function nodelist_service_get($type = '', $offset = 0) {
+
+  //TODO: allow the list of node types
+  $type_clause = (!empty($type))?'n.type = \''.$type.'\' AND ':'';
+
+  //TODO: limits must be changable via administer
+  //TODO: accept parameters to change order
+  $result = pager_query(db_rewrite_sql('SELECT n.nid, n.title FROM {node} n WHERE '.$type_clause.'n.status = 1 ORDER BY n.sticky DESC, n.title DESC'), 50, $offset);
+
+  $nodes = array();
+  while ($node = db_fetch_object($result)) {
+    $nodes[$node->nid] = filter_xss_admin($node->title);
+  }
+
+  return $nodes;
+}
