@@ -24,18 +24,58 @@ function nodelist_service_help($path, $arg) {
 function nodelist_service_perm() {
   return array(
     'load nodes',
+    'load node types',
   );
 }
 
 /**
-* Implementation of hook_service()
-*/
+ * Admin settings page
+ */
+
+/** 
+ * Implementation of hook_form_FORM_ID_alter(). 
+ */  
+function nodelist_service_form_services_admin_settings_alter(&$form, $form_state) {
+
+	// prefix another submit handler
+	array_unshift($form['#submit'], '_nodelist_service_admin_settings_submit');
+
+	// Nodelist service settings
+  $form['nodelist_service'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Public Node Types'),
+    '#description' => t('Select the content types you want to appear in the response of nodelist.types service.'),
+    '#collapsible' => TRUE,
+		'#weight'	=> -1
+  );
+
+	// Allowed Types
+	$form['nodelist_service']['nodelist_service_types'] = array(
+		'#type' => 'checkboxes',
+		'#default_value' => variable_get('nodelist_service_types', Array()),
+		'#options' => node_get_types('names'),
+		'#required' => FALSE,
+	);
+}
+
+function _nodelist_service_admin_settings_submit($form, $form_state) {
+	variable_set('nodelist_service_types', $form_state['values']['nodelist_service_types']);
+}
+
+/**
+ * Services API
+ */
+
+/**
+ * Implementation of hook_service()
+ */
 function nodelist_service_service() {
   return array(
     // nodelist.get
     array(
       '#method'   => 'nodelist.get',
       '#callback' => 'nodelist_service_get',
+      '#access callback' => 'nodelist_service_get_access',
       //'#auth'     => false,
       '#return'   => 'struct',
       '#args'     => array(
@@ -44,16 +84,36 @@ function nodelist_service_service() {
           '#type'         => 'string',
           '#optional'     => TRUE,
           '#description'  => t('A type of nodes to return.'),
+					'#default value'=> '',
         ),
         array(
           '#name'         => 'offset',
           '#type'         => 'int',
           '#optional'     => TRUE,
-          '#description'  => t('The page offset.')
+          '#description'  => t('The page offset.'),
+					'#default value'=> 0,
         )
       ),
       '#return'   => 'struct',
       '#help'     => t('Returns a list of nodes.')
+    ),
+    array(
+      '#method'   => 'nodelist.types',
+      '#callback' => 'nodelist_service_types',
+      '#access callback' => 'nodelist_service_types_access',
+      //'#auth'     => false,
+      '#return'   => 'struct',
+      '#args'     => array(
+        array(
+          '#name'         => 'op',
+          '#type'         => 'string',
+          '#optional'     => TRUE,
+          '#description'  => t('The format in which to return the list.'),
+					'#default value'=> 'types',
+        )
+      ),
+      '#return'   => 'struct',
+      '#help'     => t('Returns a list of available node types in the specified format.')
     )
   );
 }
@@ -71,12 +131,14 @@ function nodelist_service_service() {
  */
 function nodelist_service_get($type = '', $offset = 0) {
 
-  //TODO: allow the list of node types
-  $type_clause = (!empty($type))?'n.type = \''.$type.'\' AND ':'';
+	// node types clause, i.e. specified or any allowed
+	$type_clause = (!empty($type))
+		? '= \''.$type.'\' AND'
+		: 'IN (\'' . implode('\',\'', array_filter(variable_get('nodelist_service_types', array()), 'nodelist_service_types_filter')) . '\') AND';
 
   //TODO: limits must be changable via administer
   //TODO: accept parameters to change order
-  $result = pager_query(db_rewrite_sql('SELECT n.nid, n.title FROM {node} n WHERE '.$type_clause.'n.status = 1 ORDER BY n.sticky DESC, n.title DESC'), 50, $offset);
+  $result = pager_query(db_rewrite_sql('SELECT n.nid, n.title FROM {node} n WHERE n.type '.$type_clause.' n.status = 1 ORDER BY n.sticky DESC, n.title DESC'), 50, $offset);
 
   $nodes = array();
   while ($node = db_fetch_object($result)) {
@@ -84,4 +146,79 @@ function nodelist_service_get($type = '', $offset = 0) {
   }
 
   return $nodes;
+}
+
+/**
+ * Check if the user has the permission to get the
+ * list of nodes thru services.
+ *
+ * @param $type
+ *   String. The node type.
+ * @return
+ *   Boolean. TRUE if the user has the permission to get the
+ *   list of nodes thru services.
+ */
+function nodelist_service_get_access($type = '') {
+	global $user;
+	$allowed_types = array_filter(variable_get('nodelist_service_types', array()), 'nodelist_service_types_filter');
+	return (user_access('load nodes') && (in_array($type, $allowed_types) || empty($type)));
+}
+
+/**
+ * Builds a list of available node types, and returns all of part of this list
+ * in the specified format.
+ *
+ * @param $op
+ *   String (optional). The format in which to return the list, 'types' or 'names'.
+ *
+ * @return
+ *   Array. The list of all available node types.
+ */
+function nodelist_service_types($op = 'types') {
+  $res = array();
+
+	if ($types = node_get_types($op)) {
+
+		// construct result containing allowed types only
+		$allowed_types = variable_get('nodelist_service_types', array());
+		foreach ($allowed_types as $type) {
+			if (isset($types[$type])) {
+				$res[$type] = $types[$type];
+			}
+		}
+	}
+
+	return $res;
+}
+
+/**
+ * Check if the user has the permission to get the
+ * list of node types thru services.
+ *
+ * @return
+ *   Boolean. TRUE if the user has the permission to get the
+ *   list of node types thru services.
+ */
+function nodelist_service_types_access() {
+	global $user;
+	return user_access('load node types');
+}
+
+/**
+ * Helper functions
+ */
+
+/**
+ * Callback function to use with array_filter.
+ *
+ * Reduce elements where value is '0'.
+ *
+ * @param $var
+ *   Mixed. Current value.
+ *
+ * @return
+ *   Boolean. True if non zero value, e.g. '0'.
+ */
+function nodelist_service_types_filter($var) {
+	return ($var != '0');
 }
